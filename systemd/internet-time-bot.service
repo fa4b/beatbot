@@ -1,0 +1,21 @@
+[Unit]
+Description=Internet Time Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=faab
+WorkingDirectory=/opt/internet-time-bot
+
+# Load the .env file directly into the service environment
+EnvironmentFile=/opt/internet-time-bot/.env
+
+ExecStart=/usr/bin/bundle exec rake bot:start
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

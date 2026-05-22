@@ -1,0 +1,12 @@
+# Never commit .env to version control. Please.
+
+# Discord bot token (from https://discord.com/developers/applications)
+DISCORD_TOKEN=your_discord_bot_token_here
+
+# Prefix for bot commands (default: !)
+# Examples: !beat  !time  !worldtime
+COMMAND_PREFIX=!
+
+# How often to poll the Beat API, in seconds.
+# 1 beat = 86.4s — 60s gives one update per beat with margin.
+BEAT_UPDATE_INTERVAL=60
