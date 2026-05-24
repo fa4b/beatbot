@@ -3,7 +3,6 @@ ruby '~> 3.2'
 
 gem 'rails',          '~> 7.1'
 gem 'discordrb',      '~> 3.5'
-gem 'faraday',        '~> 2.9'
 gem 'dotenv-rails',   '~> 3.1'
 
 group :development do

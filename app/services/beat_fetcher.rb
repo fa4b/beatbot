@@ -1,23 +1,25 @@
-require 'faraday'
-require 'json'
-require 'zlib'
+require 'date'
 
-# Fetches the current Swatch Internet Time (BMT) from the public API with retry logic.
-# Implements exponential backoff for rate-limit handling (429, 503).
-# Returns the beat string (e.g. "@ 583") or an error message if the API call fails.
+# Calculates the current Swatch Internet Time (BMT) locally.
+#     fa4b - 2026-05-24
+# I changed method so I can have decimal precision for the !beat command, and also provide a full data hash for the !worldtime command without needing to make multiple calls or calculations.
+# I thought the API could give decimal precision but it seems to be an integer, so I implemented the decimal calculation locally based on the current time in BMT. 
+# This way we can have more accurate beat times for the !beat command while still providing the full data for !worldtime without extra overhead.
+# No external API call — derived from UTC+1 (Biel Mean Time).
+#
+# fetch_short  → beat string without decimals, e.g. "@583"       (used for bot presence)
+# fetch        → beat string with decimals, e.g. "@583.42"       (used for !beat command)
+# fetch_full   → { beat: "@583.42", date: "2026-05-24" }         (used for !worldtime command)
 
 class BeatFetcher
-  API_URL = 'https://aisenseapi.com/services/v1/swatchinternettime'.freeze
-  MAX_RETRIES = 3
-  INITIAL_BACKOFF = 1
-  MAX_BACKOFF = 16
-
-  def initialize
-    @connection = nil
-  end
+  DECIMALS = 2 # Decimal precision for commands (0 = integer, 2 = BBB.DD, 4 = BBB.DDDD)
 
   def self.fetch
     new.fetch
+  end
+
+  def self.fetch_short
+    new.fetch_short
   end
 
   def self.fetch_full
@@ -25,86 +27,41 @@ class BeatFetcher
   end
 
   def fetch
-    result = fetch_full
-    result&.fetch(:beat)
+    format_beat(calculate_beats, decimals: DECIMALS)
+  end
+
+  def fetch_short
+    format_beat(calculate_beats, decimals: 0)
   end
 
   def fetch_full
-    attempt = 0
-    backoff = INITIAL_BACKOFF
-
-    loop do
-      attempt += 1
-      response = connection.get(API_URL)
-
-      if response.success?
-        body = response.body.dup.force_encoding('BINARY')
-        body = decompress_if_gzipped(body)
-        body = body.strip
-        Rails.logger.info("[BeatFetcher] Response body: #{body.inspect}")
-        data = JSON.parse(body)
-        return validate_and_extract(data)
-      elsif response.status == 429 || response.status == 503
-        if attempt < MAX_RETRIES
-          Rails.logger.warn("[BeatFetcher] Rate limited (status #{response.status}). Retrying in #{backoff}s (attempt #{attempt}/#{MAX_RETRIES})")
-          sleep backoff
-          backoff = [backoff * 2, MAX_BACKOFF].min
-          next
-        else
-          Rails.logger.error("[BeatFetcher] Rate limited and max retries exceeded")
-          return nil
-        end
-      else
-        Rails.logger.error("[BeatFetcher] API call failed with status #{response.status}")
-        return nil
-      end
-    end
-  rescue JSON::ParserError => e
-    Rails.logger.error("[BeatFetcher] JSON parse error: #{e.message}")
-    nil
-  rescue StandardError => e
-    Rails.logger.error("[BeatFetcher] Exception: #{e.class} - #{e.message}")
-    nil
+    now_bmt = bmt_now
+    beats   = calculate_beats(now_bmt)
+    {
+      beat: format_beat(beats, decimals: DECIMALS),
+      date: now_bmt.strftime('%Y-%m-%d')
+    }
   end
 
   private
 
-  def validate_and_extract(data)
-    unless data.is_a?(Hash)
-      Rails.logger.error("[BeatFetcher] Invalid API response: expected Hash, got #{data.class}")
-      return nil
-    end
-
-    beat = data['beat']
-    date = data['date']
-
-    if beat.nil? || date.nil?
-      Rails.logger.error("[BeatFetcher] Missing required fields in API response: beat=#{beat.inspect}, date=#{date.inspect}")
-      return nil
-    end
-
-    { beat: beat, date: date }
+  def bmt_now
+    Time.now.utc + 3600
   end
 
-  def connection
-    @connection ||= build_connection
+  def calculate_beats(now = bmt_now)
+    total_seconds = now.hour * 3600 +
+                    now.min  * 60   +
+                    now.sec         +
+                    now.subsec.to_f
+    total_seconds / 86.4
   end
 
-  def build_connection
-    Faraday.new do |f|
-      f.options.timeout = 10
-      f.options.open_timeout = 5
-      f.headers['User-Agent'] = 'InternetTimeBot/1.0'
-      f.headers['Accept'] = 'application/json'
-      f.headers['Accept-Encoding'] = 'identity'
-    end
-  end
-
-  def decompress_if_gzipped(body)
-    if body.start_with?("\x1F\x8B".force_encoding('BINARY'))
-      Zlib::GzipReader.new(StringIO.new(body)).read.encode('UTF-8', invalid: :replace, undef: :replace)
+  def format_beat(beats, decimals: 2)
+    if decimals > 0
+      "@#{format("%0#{3 + 1 + decimals}.#{decimals}f", beats)}"
     else
-      body.encode('UTF-8', invalid: :replace, undef: :replace)
+      "@#{format('%03d', beats.floor)}"
     end
   end
 end
